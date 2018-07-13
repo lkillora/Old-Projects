@@ -1,0 +1,5 @@
+When I tried to submit my assignment through a google drive link,
+Moodle had the error: A required parameter (id) was missing.
+
+So I deleted all the pckl files and the data file, but they are available here:
+https://drive.google.com/open?id=1CHrTdHV5QtWT-s4QFv5twJxu0F-XXdyu 
