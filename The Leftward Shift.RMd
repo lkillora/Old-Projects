@@ -1,0 +1,1178 @@
+---
+title: "Has the Money Come in for the Democrats?"
+author: "Luke Killoran"
+output: html_document
+---
+
+```{r downloads, include=FALSE}
+library(lubridate)
+library(stringr)
+library(reshape2)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(maps)
+library(mapproj)
+library(sf)
+library(ggmap)
+library(gridExtra)
+library(gtable)
+library(grid)
+```
+
+_Before using the code, download and unzip the candidate summary file for the 2016 campaign from this address: <https://www.kaggle.com/danerbland/electionfinance>.Do the same for the 2018 campaign through this link: <https://classic.fec.gov/data/CandidateSummary.do?format=html>. (Use the csv button.) Then move both files into your working directory._ 
+
+_Note that the file descriptions are provided [here](https://classic.fec.gov/finance/disclosure/metadata/metadataforcandidatesummary.shtml) and [here](https://classic.fec.gov/data/CandidateSummary.do?format=html) respectively._
+
+_This document is unfinished._
+
+This document has two motivations:
+\n1. Find out whether the Democrats really have received more funding than they did in 2016
+\n2. Make a(n) (explainable) miniature model (based solely on contributions and incumbency status) to investigate the chances that the Democrats take the House
+
+First, some plots to illustrate how Democrats' coffers are brimming.
+```{r readin, include=FALSE}
+#setwd("C:/Users/Luke/Dropbox/Data Journalism")
+cont <- read.csv(file="CandidateSummaryAction1.csv", header=TRUE, sep=",")
+cont18 <- read.csv(file="CandidateSummaryAction.csv", header=TRUE, sep=",")
+
+# Select columns
+names <- c("can_id","can_nam","can_off","can_off_sta",
+            "can_off_dis","can_par_aff","can_inc_cha_ope_sea","can_cit",
+            "ind_ite_con","ind_uni_con","ind_con","par_com_con","oth_com_con",
+            "can_con","tot_con","cov_sta_dat","cov_end_dat","ind_ref",
+            "tot_con_ref","tot_dis","net_con")
+cont18 <- cont18[,c(names,"lin_ima")]
+cont <- cont[,c(names,"winner")]
+
+# Format date columns as dates
+cont$cov_sta_dat <-as.Date(cont$cov_sta_dat,"%m/%d/%Y")
+cont$cov_end_dat <-as.Date(cont$cov_end_dat,"%m/%d/%Y")
+cont18$cov_sta_dat <-as.Date(cont18$cov_sta_dat,"%m/%d/%Y")
+cont18$cov_end_dat <-as.Date(cont18$cov_end_dat,"%m/%d/%Y")
+
+# Change winner column to have 'N' for non-winners
+cont <- cont %>% mutate(winner= ifelse(winner=="Y","Y","N"))
+cont$winner <- as.factor(cont$winner)
+
+# change some columns to numeric
+cont$tot_con <- as.numeric(gsub('[$,]', '', cont$tot_con))
+cont$par_com_con <- as.numeric(gsub('[$,]', '', cont$par_com_con))
+cont$ind_con <- as.numeric(gsub('[$,]', '', cont$ind_con))
+cont$ind_ite_con <- as.numeric(gsub('[$,]', '', cont$ind_ite_con))
+cont$ind_uni_con <- as.numeric(gsub('[$,]', '', cont$ind_uni_con))
+cont$net_con <- as.numeric(gsub('[$,]', '', cont$net_con))
+cont$oth_com_con <- as.numeric(gsub('[$,]', '', cont$oth_com_con))
+cont$ind_ref <- as.numeric(gsub('[$,]', '', cont$ind_ref))
+cont$tot_con_ref <- as.numeric(gsub('[$,]', '', cont$tot_con_ref))
+cont$tot_dis <- as.numeric(gsub('[$,]', '', cont$tot_dis))
+
+cont18$tot_con <- as.numeric(gsub('[$,]', '', cont18$tot_con))
+cont18$par_com_con <- as.numeric(gsub('[$,]', '', cont18$par_com_con))
+cont18$ind_con <- as.numeric(gsub('[$,]', '', cont18$ind_con))
+cont18$ind_ite_con <- as.numeric(gsub('[$,]', '', cont18$ind_ite_con))
+cont18$ind_uni_con <- as.numeric(gsub('[$,]', '', cont18$ind_uni_con))
+cont18$net_con <- as.numeric(gsub('[$,]', '', cont18$net_con))
+cont18$oth_com_con <- as.numeric(gsub('[$,]', '', cont18$oth_com_con))
+cont18$ind_ref <- as.numeric(gsub('[$,]', '', cont18$ind_ref))
+cont18$tot_con_ref <- as.numeric(gsub('[$,]', '', cont18$tot_con_ref))
+cont18$tot_dis <- as.numeric(gsub('[$,]', '', cont18$tot_dis))
+```
+```{r edit blanks, include=FALSE}
+# Changes to blanks
+cont[1813:1814,"can_inc_cha_ope_sea"] <- "CHALLENGER"
+cont[1813:1814,"can_off_dis"] <- 0
+# These variables were missing so I looked up who the candidates were
+# and filled in manually
+# YOUNG, DONALD E is district 0 therefore so is LINDBECK, STEVE
+# HUNKIN-FINAU, VAITINASA SALU is district 0 I think
+```
+```{r keys and horses, include=FALSE}
+# Add keys and horses
+cont <- cont %>% mutate(can_off_s = as.character(can_off), can_off_sta_s = as.character(can_off_sta), can_off_dis_s = as.character(can_off_dis)) %>%
+  mutate(key = paste(can_off_s, can_off_sta_s, can_off_dis_s, sep = '_')) %>%
+  select(-can_off_s,-can_off_sta_s,-can_off_dis_s)
+horses <- cont %>% group_by(key) %>% summarise(horses = n())
+cont <- cont %>%
+  inner_join(horses, by="key")
+
+cont18 <- cont18 %>% mutate(can_off_s = as.character(can_off), can_off_sta_s = as.character(can_off_sta), can_off_dis_s = as.character(can_off_dis)) %>%
+  mutate(key = paste(can_off_s, can_off_sta_s, can_off_dis_s, sep = '_')) %>%
+  select(-can_off_s,-can_off_sta_s,-can_off_dis_s)
+horses <- cont18 %>% group_by(key) %>% summarise(horses = n())
+cont18 <- cont18 %>%
+  inner_join(horses, by="key")
+```
+```{r more changes, include=FALSE}
+# Making changes
+# American Samoa didnt hold elections so exclude
+cont <- cont %>% filter(key!="H_AS_0")
+# BORDALLO, MADELEINE Z. MS. actually won
+cont[which(cont[,"can_nam"]=="BORDALLO, MADELEINE Z. MS."),"winner"] <- "Y"
+# FOXX, VIRGINIA ANN actually won
+cont[which(cont[,"can_nam"]=="FOXX, VIRGINIA ANN"),"winner"] <- "Y"
+# GONZALEZ COLON, JENNIFFER actually won
+cont[which(cont[,"can_nam"]=="GONZALEZ COLON, JENNIFFER"),"winner"] <- "Y"
+# PLASKETT, STACEY actually won
+cont[which(cont[,"can_nam"]=="PLASKETT, STACEY "),"winner"] <- "Y"
+# KENNEDY, JOHN NEELY actually won
+cont[which(cont[,"can_nam"]=="KENNEDY, JOHN NEELY"),"winner"] <- "Y"
+# and CAMPBELL, FOSTER LONNNIE II didn't
+cont[which(cont[,"can_nam"]=="CAMPBELL, FOSTER LONNNIE II"),"winner"] <- "N"
+# NJ no senate election
+cont <- cont %>% filter(key!="S_NJ_0")
+# SABLAN, GREGORIO KILILI CAMACHO won
+cont[which(cont[,"can_nam"]=="SABLAN, GREGORIO KILILI CAMACHO"),"winner"] <- "Y"
+```
+```{r prop_spending, include=FALSE}
+# Now % of Spending in District on That Candidate
+tot_spend <- cont %>% group_by(key) %>% summarise(distr_con=sum(tot_con, na.rm=TRUE)) %>%
+  select(key,distr_con)
+cont <- cont %>% inner_join(tot_spend, by="key")
+cont <- cont %>% mutate(prop_con = tot_con/distr_con)
+
+tot_spend <- cont18 %>% group_by(key) %>% summarise(distr_con=sum(tot_con, na.rm=TRUE)) %>%
+  select(key,distr_con)
+cont18 <- cont18 %>% inner_join(tot_spend, by="key")
+cont18 <- cont18 %>% mutate(prop_con = tot_con/distr_con)
+
+```
+```{r add state names, include=FALSE}
+read.table(text="region can_off_sta
+Alabama	AL
+Alaska AK
+Arizona AZ
+Arkansas AR
+California CA
+Colorado CO
+Connecticut CT
+Delaware DE
+District_of_Columbia DC
+Florida FL
+Georgia GA
+Hawaii HI
+Idaho ID
+Illinois IL
+Indiana IN
+Iowa IA
+Kansas KS
+Kentucky KY
+Louisiana LA
+Maine ME
+Maryland MD
+Massachusetts MA
+Michigan MI
+Minnesota MN
+Mississippi MS
+Missouri MO
+Montana MT
+Nebraska NE
+Nevada NV
+New_Hampshire NH
+New_Jersey NJ
+New_Mexico NM
+New_York NY
+North_Carolina NC
+North_Dakota ND
+Ohio OH
+Oklahoma OK
+Oregon OR
+Pennsylvania PA
+Rhode_Island RI
+South_Carolina SC
+South_Dakota SD
+Tennessee TN
+Texas TX
+Utah UT
+Vermont VT
+Virginia VA
+Washington WA
+West_Virginia WV
+Wisconsin WI
+Wyoming WY", stringsAsFactors=TRUE, header=TRUE, comment.char="") -> state_names
+state_names$region <- gsub('[_]',' ', state_names$region)
+state_names$region <- sapply(state_names$region, tolower)
+cont <- cont %>% left_join(state_names,by="can_off_sta")
+cont18 <- cont18 %>% left_join(state_names,by="can_off_sta")
+# US State Map Data
+us_states <- map_data("state")
+```
+```{r setup state dem and rep comparison, include=FALSE}
+par_state_con <- cont %>% filter(can_par_aff=="DEM"|can_par_aff=="REP") %>%
+  filter(can_off=="H") %>% filter(!is.na(region)) %>%
+  group_by(can_par_aff,region) %>% 
+  summarise(par_state_contributions = sum(tot_con, na.rm=TRUE),
+            wins = sum(winner=="Y")) %>% ungroup() %>%
+  select(can_par_aff,region,par_state_contributions, wins)
+rep_state_con <- par_state_con %>% filter(can_par_aff=="REP") %>% 
+  select(-can_par_aff) %>% 
+  rename(rep_cont = par_state_contributions, rep_wins = wins)
+par_state_con <- par_state_con %>% filter(can_par_aff=="DEM") %>% 
+  select(-can_par_aff) %>% 
+  rename(dem_cont = par_state_contributions, dem_wins = wins) %>%
+  left_join(rep_state_con,by="region") %>% 
+  mutate(rep_over_dem = ifelse(is.na(rep_cont),0.01,rep_cont/dem_cont),
+         rep_over_dem = ifelse(rep_over_dem>1|rep_over_dem==0,
+                               rep_over_dem,-1/rep_over_dem))
+
+par_state_con18 <- cont18 %>% filter(can_par_aff=="DEM"|can_par_aff=="REP") %>%
+  filter(can_off=="H") %>% filter(!is.na(region)) %>%
+  group_by(can_par_aff,region) %>% 
+  summarise(par_state_contributions = sum(tot_con, na.rm=TRUE)) %>% 
+  ungroup() %>%
+  select(can_par_aff,region,par_state_contributions)
+dem_state_con <- par_state_con18 %>% filter(can_par_aff=="DEM") %>% 
+  select(-can_par_aff) %>% 
+  rename(dem_cont = par_state_contributions)
+par_state_con18 <- par_state_con18 %>% filter(can_par_aff=="REP") %>% 
+  select(-can_par_aff) %>% 
+  rename(rep_cont = par_state_contributions) %>%
+  inner_join(dem_state_con,by="region") %>% 
+  mutate(rep_over_dem = rep_cont/dem_cont,
+         rep_over_dem = ifelse(rep_over_dem>1|rep_over_dem==0,
+                               rep_over_dem,-1/rep_over_dem)) %>%
+  rename(rep_over_dem18 = rep_over_dem) 
+
+par_state_con <- par_state_con %>% left_join(par_state_con18,by="region")
+par_state_con <- par_state_con %>% 
+  mutate(rod_change=(rep_over_dem18-rep_over_dem)/abs(rep_over_dem))
+```
+```{r plot 16 and 18, echo=FALSE}
+par_state_con <- par_state_con %>%
+  mutate(rep_over_dem = ifelse(rep_over_dem > 3.5, 3.5, rep_over_dem)) %>%
+  mutate(rep_over_dem = ifelse(rep_over_dem< -3.5, -3.5, rep_over_dem))
+map.df <- merge(us_states,par_state_con, by="region", all.x=T)
+map.df <- map.df[order(map.df$order),]
+max = max(par_state_con$rep_over_dem)
+min = min(par_state_con$rep_over_dem)
+
+par(mar=c(0,0,0,0))
+plot1 <- ggplot(map.df, aes(x=long,y=lat,group=group))+
+  geom_polygon(aes(fill=rep_over_dem))+
+  geom_path()+ 
+  coord_map()+
+  labs(subtitle="2016") +
+  scale_fill_gradient2(low = "blue", midpoint = 0, mid = "white", high = "red",
+                       limits=c(min, max), breaks=seq(min, max,
+                                                      by=(max-min)/7),
+                       name = "Who Gets More?",
+                       labels=c("Democrats by 3.5x","Dem. by 2.5x",
+                                "Dem. by 1.5x","Dem. by 0.5x",
+                                "Rep. by 0.5x","Rep. by 1.5x",
+                                "Rep. by 2.5x", "Republicans by 3.5x"))+
+  theme(panel.background = element_rect(fill="white",colour="white"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.subtitle = element_text(size=8, face="bold"),
+        legend.title = element_text(size=8, face = "italic"),
+        legend.text = element_text(size=8),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank())
+
+par_state_con <- par_state_con %>%
+  mutate(rep_over_dem18 = ifelse(rep_over_dem18 > 3.5, 3.5, rep_over_dem18)) %>%
+  mutate(rep_over_dem18 = ifelse(rep_over_dem18< -3.5, -3.5, rep_over_dem18))
+map.df <- merge(us_states,par_state_con, by="region", all.x=T)
+map.df <- map.df[order(map.df$order),]
+max = max(par_state_con$rep_over_dem18)
+min = min(par_state_con$rep_over_dem18)
+
+par(mar=c(0,0,0,0))
+plot2 <- ggplot(map.df, aes(x=long,y=lat,group=group))+
+  geom_polygon(aes(fill=rep_over_dem18))+
+  geom_path()+ 
+  coord_map()+
+  labs(subtitle="2018") +
+  scale_fill_gradient2(low = "blue", midpoint = 0, mid = "white", high = "red",
+                       limits=c(min, max), breaks=seq(min, max,
+                                                      by=(max-min)/7),
+                       name = "Who Gets More?",
+                       labels=c("Democrats by 3.5x","Dem. by 2.5x",
+                                "Dem. by 1.5x","Dem. by 0.5x",
+                                "Rep. by 0.5x","Rep. by 1.5x",
+                                "Rep. by 2.5x", "Republicans by 3.5x"))+
+  theme(panel.background = element_rect(fill="white",colour="white"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.subtitle = element_text(size=8, face = "bold"),
+        legend.title = element_text(size=8, face = "italic"),
+        legend.text = element_text(size=8),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank())
+
+g_legend <- function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)}
+
+mylegend <- g_legend(plot1)
+
+title1=textGrob("Contributions to House Candidates", gp=gpar(fontface="bold"))
+par(mar=c(0,0,0,0))
+grid.arrange(arrangeGrob(plot1 + theme(legend.position="none"),
+                         plot2 + theme(legend.position="none"), nrow=2,
+                         top=title1),
+             mylegend, ncol=2,widths=c(8, 2.5))
+```
+
+```{r plotchange, echo=FALSE}
+par_state_con <- par_state_con %>%
+  mutate(rod_change = ifelse(rod_change > 1, 1, rod_change)) %>%
+  mutate(rod_change = ifelse(rod_change< -1, -1, rod_change))
+map.df <- merge(us_states,par_state_con, by="region", all.x=T)
+map.df <- map.df[order(map.df$order),]
+max = max(par_state_con$rod_change)
+min = min(par_state_con$rod_change)
+
+par(mar=c(0,0,0,0))
+ggplot(map.df, aes(x=long,y=lat,group=group))+
+  geom_polygon(aes(fill=rod_change))+
+  geom_path()+ 
+  coord_map()+
+  labs(title = "Has the Money Changed Its Colour?")+
+  scale_fill_gradient2(low = "blue", midpoint = 0, mid = "white", high = "red",
+                       limits=c(min, max), breaks=seq(min, max,
+                                                      by=(max-min)/5),
+                       name = "Change in Contribution Ratio ",
+                       labels=c("100% in favour of Dem.",
+                                "60% in favour of Dem.",
+                                "20% in favour of Dem.",
+                                "20% in favour of Rep.",
+                                "60% in favour of Rep.",
+                                "100% in favour of Rep."))+
+  theme(panel.background = element_rect(fill="white",colour="white"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(size=10, face = "bold", hjust = 0),
+        legend.title = element_text(size=8, face = "italic"),
+        legend.text = element_text(size=8),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank())
+
+```
+
+```{r setup state senate comparison, include=FALSE}
+sen_par_state_con <- cont %>% filter(can_par_aff=="DEM"|can_par_aff=="REP") %>%
+  filter(can_off=="S") %>% filter(!is.na(region)) %>%
+  group_by(can_par_aff,region) %>% 
+  summarise(par_state_contributions = sum(tot_con, na.rm=TRUE),
+            wins = sum(winner=="Y")) %>% ungroup() %>%
+  select(can_par_aff,region,par_state_contributions, wins)
+rep_sen_state_con <- sen_par_state_con %>% filter(can_par_aff=="REP") %>% 
+  select(-can_par_aff) %>% 
+  rename(rep_cont = par_state_contributions, rep_wins = wins)
+sen_par_state_con <- sen_par_state_con %>% filter(can_par_aff=="DEM") %>% 
+  select(-can_par_aff) %>% 
+  rename(dem_cont = par_state_contributions, dem_wins = wins) %>%
+  full_join(rep_sen_state_con,by="region") %>% 
+  mutate(rep_over_dem = ifelse(is.na(dem_cont),100,rep_cont/dem_cont),
+         rep_over_dem = ifelse(is.na(rep_cont),0.01,rep_over_dem),
+         rep_over_dem = ifelse(rep_over_dem>1|rep_over_dem==0,
+                               rep_over_dem,-1/rep_over_dem))
+
+sen_par_state_con18 <- cont18 %>% 
+  filter(can_par_aff=="DEM"|can_par_aff=="REP") %>% 
+  filter(can_off=="S") %>% filter(!is.na(region)) %>%
+  group_by(can_par_aff,region) %>% 
+  summarise(par_state_contributions = sum(tot_con, na.rm=TRUE)) %>% 
+  ungroup() %>%
+  select(can_par_aff,region,par_state_contributions)
+dem_sen_state_con <- sen_par_state_con18 %>% filter(can_par_aff=="DEM") %>% 
+  select(-can_par_aff) %>% 
+  rename(dem_cont = par_state_contributions)
+sen_par_state_con18 <- sen_par_state_con18 %>% filter(can_par_aff=="REP") %>% 
+  select(-can_par_aff) %>% 
+  rename(rep_cont = par_state_contributions) %>%
+  full_join(dem_sen_state_con,by="region") %>% 
+  mutate(rep_over_dem18 = ifelse(is.na(dem_cont),100,rep_cont/dem_cont),
+         rep_over_dem18 = ifelse(is.na(rep_cont),0.01,rep_over_dem18),
+         rep_over_dem18 = ifelse(rep_over_dem18>1|rep_over_dem18==0,
+                               rep_over_dem18,-1/rep_over_dem18))
+```
+```{r senate plot 16 and 18, echo=FALSE}
+sen_par_state_con <- sen_par_state_con %>%
+  mutate(rep_over_dem = ifelse(rep_over_dem > 3.5, 3.5, rep_over_dem)) %>%
+  mutate(rep_over_dem = ifelse(rep_over_dem < -3.5, -3.5, rep_over_dem))
+map.df <- merge(us_states,sen_par_state_con, by="region", all.x=T)
+map.df <- map.df[order(map.df$order),]
+max = max(sen_par_state_con$rep_over_dem, na.rm=TRUE)
+min = min(sen_par_state_con$rep_over_dem, na.rm=TRUE)
+
+par(mar=c(0,0,0,0))
+plot1 <- ggplot(map.df, aes(x=long,y=lat,group=group))+
+  geom_polygon(aes(fill=rep_over_dem))+
+  geom_path()+ 
+  coord_map()+
+  labs(subtitle="2016") +
+  scale_fill_gradient2(low = "blue", midpoint = 0, mid = "white", high = "red",
+                       limits=c(min, max), breaks=seq(min, max,
+                                                      by=(max-min)/7),
+                       name = "Who Gets More?",
+                       labels=c("Democrats by 3.5x","Dem. by 2.5x",
+                                "Dem. by 1.5x","Dem. by 0.5x",
+                                "Rep. by 0.5x","Rep. by 1.5x",
+                                "Rep. by 2.5x", "Republicans by 3.5x"))+
+  theme(panel.background = element_rect(fill="white",colour="white"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.subtitle = element_text(size=8, face="bold"),
+        legend.title = element_text(size=8, face = "italic"),
+        legend.text = element_text(size=8),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank())
+
+sen_par_state_con18 <- sen_par_state_con18 %>%
+  mutate(rep_over_dem18 = ifelse(rep_over_dem18 > 3.5, 3.5, rep_over_dem18)) %>%
+  mutate(rep_over_dem18 = ifelse(rep_over_dem18< -3.5, -3.5, rep_over_dem18))
+map.df <- merge(us_states,sen_par_state_con18, by="region", all.x=T)
+map.df <- map.df[order(map.df$order),]
+max = max(sen_par_state_con18$rep_over_dem18, na.rm=TRUE)
+min = min(sen_par_state_con18$rep_over_dem18, na.rm=TRUE)
+
+par(mar=c(0,0,0,0))
+plot2 <- ggplot(map.df, aes(x=long,y=lat,group=group))+
+  geom_polygon(aes(fill=rep_over_dem18))+
+  geom_path()+ 
+  coord_map()+
+  labs(subtitle="2018") +
+  scale_fill_gradient2(low = "blue", midpoint = 0, mid = "white", high = "red",
+                       limits=c(min, max), breaks=seq(min, max,
+                                                      by=(max-min)/7),
+                       name = "Who Gets More?",
+                       labels=c("Democrats by 3.5x","Dem. by 2.5x",
+                                "Dem. by 1.5x","Dem. by 0.5x",
+                                "Rep. by 0.5x","Rep. by 1.5x",
+                                "Rep. by 2.5x", "Republicans by 3.5x"))+
+  theme(panel.background = element_rect(fill="white",colour="white"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.subtitle = element_text(size=8, face = "bold"),
+        legend.title = element_text(size=8, face = "italic"),
+        legend.text = element_text(size=8),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank())
+
+g_legend <- function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)}
+
+mylegend <- g_legend(plot1)
+
+title1=textGrob("Contributions to Senate Candidates", gp=gpar(fontface="bold"))
+par(mar=c(0,0,0,0))
+grid.arrange(arrangeGrob(plot1 + theme(legend.position="none"),
+                         plot2 + theme(legend.position="none"), nrow=2,
+                         top=title1),
+             mylegend, ncol=2,widths=c(8, 2.5))
+```
+
+So it would seem that Democrats have persuaded contributors to favour them, but this inference is mistaken.
+
+INSERT OTHER CHARTS
+
+
+
+This prompts the second goal of this document: to investigate the Democrats' chances. They currently hold only 188 out of the total 435, well short of the 290 needed to secure the crucial supermajority.
+
+The chart below exhibits the landscape of the current state of play.
+```{r house seats plot, echo=FALSE}
+size = 1.5
+x_diff = 0.7
+y_diff = 0.625
+dem = "blue"
+rep = "red"
+other = "gray48"
+party = dem
+par(mar=c(0,0,0,0))
+g <- ggplot(map.df, aes(x=long,y=lat,group=group))+
+  theme(panel.background = element_rect(fill="white",colour="white")) +
+  theme(panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  axis.text.x = element_blank(),
+  axis.text.y = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.ticks.y = element_blank()) + 
+  geom_path(colour="gray") +
+  coord_map()+
+  labs(title="The Current House Seats", subtitle="Excluding Alaska and Hawaii")+
+  theme(plot.title = element_text(size=10, face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(size=8,face = "italic",hjust = 0.5))
+  
+
+# Connecticut
+x_start = -73.2
+y_start = 41.05
+for(i in 1:2){
+  for(j in 1:2){
+    g <- g + annotate("point", x = x_start+x_diff*1.45*(j-1), 
+                  y = y_start+y_diff*1.15*(i-1), colour = dem, size = size)
+  }
+}
+g <- g + annotate("point", x = -72.68, y = 41.48, colour = dem, size = size)
+
+# Vermont 
+g <- g + annotate("point", x = -72.7, y = 44, colour = dem, size = size)
+
+# New Hampshire 
+g <- g + annotate("point", x = -71.5, y = 44, colour = dem, size = size)
+g <- g + annotate("point", x = -71.5, y = 44-y_diff, colour = dem, size = size)
+
+# Maine 
+g <- g + annotate("point", x = -69, y = 45.1, colour = rep, size = size)
+g <- g + annotate("point", x = -69, y = 45.1+y_diff, colour = dem, size = size)
+
+# Idaho 
+g <- g + annotate("point", x = -114.5, y = 43.5, colour = rep, size = size)
+g <- g + annotate("point", x = -114.5+x_diff, y = 43.5, colour = rep, size = size)
+
+# Montana
+g <- g + annotate("point", x = -109, y = 47, colour = rep, size = size)
+
+# Wyoming
+g <- g + annotate("point", x = -107.5, y = 43, colour = rep, size = size)
+
+# North Dakota
+g <- g + annotate("point", x = -100.25, y = 47.5, colour = rep, size = size)
+
+# South Dakota
+g <- g + annotate("point", x = -100.25, y = 44.5, colour = rep, size = size)
+
+# Delaware
+g <- g + annotate("point", x = -75.15, y = 38.75, colour = dem, size = size)
+
+count = 1
+# New York
+x_start = -78.25
+y_start = 42.3
+diag2=0
+for(i in 1:5){
+  for(j in 1:7){
+    if((i>2)&(j<5)){next}
+    if((i==5)&(j<7)){next}
+    if((count<=7)|(count==13)|(count==14)){party = rep}
+    else{party = dem}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), 
+                  y = y_start+y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# New Jersey
+x_start = -74.3
+y_start = 39.3
+diag=0
+for(i in 1:3){
+  for(j in 1:4){
+    if(count<=5){party = rep}
+    else{party = dem}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1)+diag*(i-1), 
+                  y = y_start+y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+# Massachusetts
+x_start = -72.85
+y_start = 42.5
+for(i in 1:3){
+  for(j in 1:5){
+    if((i>1)&(j<4)){next}
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), 
+                  y = y_start-y_diff*(i-1), colour = dem, size = size)
+  }
+}
+
+# Rhode island
+g <- g + annotate("point", x = -71.5, y = 41.75, colour = dem, size = size)
+g <- g + annotate("point", x = -71.5, y = 41.75-y_diff+0.1, colour = dem, size = size)
+
+count = 1
+# Indiana
+x_start = -86.5
+y_start = 41.25
+for(i in 1:5){
+  for(j in 1:2){
+    if((i+j==7)){break}
+    if(count<=2){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Washington 
+x_start = -121.5
+y_start = 47.75
+for(i in 1:2){
+  for(j in 1:5){
+    if(count<=6){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Oregon 
+x_start = -122
+y_start = 44.5
+for(i in 1:2){
+  for(j in 1:3){
+    if(i+j==2){next}
+    if(count<=4){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+# Utah 
+x_start = -112
+y_start = 39.5
+for(i in 1:2){
+  for(j in 1:2){
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = rep, size = size)
+  }
+}
+
+count = 1
+# Colarado 
+x_start = -107.5
+y_start = 39.3
+for(i in 1:2){
+  for(j in 1:4){
+    if(i+j==2){next}
+    if(count<=3){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Nevada 
+x_start = -117.5
+y_start = 40.5
+for(i in 1:2){
+  for(j in 1:2){
+    if(count<=3){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# New Mexico 
+x_start = -106.5
+y_start = 35
+for(i in 1:2){
+  for(j in 1:2){
+    if(i+j==2){next}
+    if(count<=2){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Arizona 
+x_start = -112.5
+y_start = 35
+for(i in 1:3){
+  for(j in 1:3){
+    if(count<=4){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+# Newbraska 
+x_start = -101
+y_start = 41.5
+for(j in 1:3){
+  g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start, colour = rep, size = size)
+}
+
+# Kansas 
+x_start = -99
+y_start = 39
+for(i in 1:2){
+  for(j in 1:2){
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = rep, size = size)
+  }
+}
+
+# Oklahoma 
+x_start = -98.5
+y_start = 36
+for(i in 1:2){
+  for(j in 1:3){
+    if(i+j==2){next}
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = rep, size = size)
+  }
+}
+
+count = 1
+# Texas 
+x_start = -101.75
+y_start = 32.5
+for(i in 1:4){
+  for(j in 1:9){
+    if(count<=11){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Minnesota 
+x_start = -95
+y_start = 47.35
+for(i in 1:4){
+  for(j in 1:2){
+    if(count<=3){party = dem}
+    else if(count<=6){party = rep}
+    else{party = other}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Iowa 
+x_start = -94
+y_start = 42.5
+for(i in 1:2){
+  for(j in 1:2){
+    if(count<=1){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Arkansas 
+x_start = -93
+y_start = 35
+for(i in 1:2){
+  for(j in 1:2){
+    if(count<=4){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Missouri 
+x_start = -93.5
+y_start = 39.5
+for(i in 1:4){
+  for(j in 1:2){
+    if(count<=2){party = dem}
+    else if(count<=7){party = rep}
+    else{party = other}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Louisiana 
+x_start = -93.35
+y_start = 32.5
+for(i in 1:2){
+  for(j in 1:3){
+    if(count<=1){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Wisconsin 
+x_start = -91
+y_start = 45.5
+for(i in 1:4){
+  for(j in 1:3){
+    if((j==1)){next}
+    if(count<=3){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Illinois 
+x_start = -89.5
+y_start = 42
+for(i in 1:6){
+  for(j in 1:3){
+    if(count<=11){party = dem}
+    else if(count<=17){party = rep}
+    else{party = other}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Mississippi 
+x_start = -90.25
+y_start = 33.5
+for(i in 1:2){
+  for(j in 1:2){
+    if(count<=1){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Alabama
+x_start = -87.1
+y_start = 33.8
+for(i in 1:4){
+  for(j in 1:2){
+    if(i+j==2){next}
+    if(count<=1){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Georgia
+x_start = -84.1
+y_start = 34
+for(i in 1:5){
+  for(j in 1:3){
+    if((i<2)&(j>2)){break}
+    if(count<=4){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Florida 27 - 8, 6, 3, 3, 3, 2, 2
+x_start = -87
+y_start = 30.35
+for(i in 1:9){
+  for(j in 1:10){
+    if((i<5)&(j==10)){break}
+    if((i>7)&(j<9)){next}
+    if((i>1)&(j<7)){next}
+    if((i>3)&(j<8)){next}
+    if((i==3)&(j<8)){next}
+    if((i==7)&(j<9)){next}
+    if(count<=11){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# California
+x_start = -122.75
+y_start = 40.75
+diag2=0
+for(i in 1:12){
+  for(j in 1:6){
+    if(i>4){diag = 0.4}
+    else{diag=0}
+    if((i<6)&(j==5)){break}
+    if(i>6){diag=0.5}
+    if((i<8)&(j==6)){break}
+    if(i>9){
+      diag2=4.5
+      diag=0
+      if((j==6)){break}
+    }
+    if((i>10)&(j==1)){next}
+    if(count<=39){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1)+diag*(i-3)+diag2, 
+                  y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Tennessee
+x_start = -87.5
+y_start = 36.2
+for(i in 1:2){
+  for(j in 1:5){
+    if((i+j==7)){break}
+    if(count<=2){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Kentucky
+x_start = -86
+y_start = 37.95
+for(i in 1:2){
+  for(j in 1:4){
+    if((i==1)&(j<3)){next}
+    if(count<=1){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Michigan
+x_start = -85.6
+y_start = 42.2
+for(i in 1:5){
+  for(j in 1:3){
+    if((i==5)&(j==1)){next}
+    if(count<=9){party = rep}
+    else{party = dem}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start+y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Ohio
+x_start = -84.25
+y_start = 41
+for(i in 1:3){
+  for(j in 1:5){
+    if(count<=4){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+# West Virginia 3
+x_start = -80.25
+y_start = 38.95
+for(i in 1:3){
+  g <- g + annotate("point", x = x_start-0.6*(i-1), y = y_start-0.35*(i-1), colour = rep, size = size)
+}
+
+count = 1
+# Virginia 11 - 6,3,2
+x_start = -81.5
+y_start = 37
+for(i in 1:3){
+  for(j in 1:7){
+    if((i==1)&(j==1)){next}
+    if((i==2)&((j<4)|(j>6))){next}
+    if((i==3)&((j<5)|(j>6))){next}
+    if((count<=6)|(count==9)){party = rep}
+    else{party = dem}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start+y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Pennsylvania
+x_start = -79.5
+y_start = 41.5
+for(i in 1:3){
+  for(j in 1:6){
+    if(count<=5){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# Maryland
+x_start = -79
+y_start = 39.5
+for(i in 1:3){
+  for(j in 1:5){
+    if((i==2)&(j<4)){next}
+    if((i==3)&(j<5)){next}
+    if(count<=7){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+# North Carolina 13
+x_start = -81.75
+y_start = 35.5
+for(i in 1:2){
+  for(j in 1:7){
+    if(i+j==9){break}
+    if((count>4)&(count<8)){party = rep}
+    else{party = dem}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1)+(i-1), y = y_start+y_diff*(i-1), colour = party, size = size)
+  }
+}
+
+count = 1
+x_start = -82.1
+y_start = 34.5
+for(i in 1:3){
+  for(j in 1:3){
+    #if((i==2)&(j==1)){next}
+    if((i==3)&(j>1)){break}
+    if(count<=1){party = dem}
+    else{party = rep}
+    count = count + 1
+    g <- g + annotate("point", x = x_start+x_diff*(j-1)+0.72*(i-1), y = y_start-y_diff*(i-1), colour = party, size = size)
+  }
+}
+par(mar=c(0,0,0,0))
+g
+```
+
+
+```{r seats by party and state, include=FALSE}
+seats_by_state <- cont %>% filter((can_off=="H")&(winner=="Y")) %>% 
+  group_by(region) %>% summarise(n = n()) %>% 
+  filter(!is.na(region)&(region!="district of columbia")) %>% 
+  select(region, n) %>% arrange(region)
+
+seats_by_par <- cont %>% filter((can_off=="H")&(winner=="Y")) %>% 
+  mutate(can_par_aff = as.character(can_par_aff)) %>%
+  mutate(can_par_aff = ifelse(!((can_par_aff=="REP")|(can_par_aff=="DEM")),
+                              "OTHER",can_par_aff)) %>%
+  group_by(region, can_par_aff) %>% 
+  summarise(n = n()) %>% 
+  filter(!is.na(region)&(region!="district of columbia")) %>% 
+  select(region, n, can_par_aff)
+dem <- seats_by_par %>% filter(can_par_aff=="DEM") %>% rename(dem = n)
+other <- seats_by_par %>% filter(can_par_aff=="OTHER") %>% rename(other = n)
+seats_by_par <- seats_by_par %>% filter(can_par_aff=="REP") %>%
+  rename(rep = n) %>%
+  full_join(dem,by="region") %>% full_join(other,"region") %>%
+  mutate(dem = ifelse(is.na(dem),0,dem)) %>%
+  mutate(rep = ifelse(is.na(rep),0,rep)) %>%
+  mutate(other = ifelse(is.na(other),0,other)) %>%
+  select(region,rep,dem,other)
+```
+
+```{r split by district, include=FALSE}
+par_dis_con <- cont %>% filter(can_par_aff=="DEM"|can_par_aff=="REP") %>%
+  filter(can_off=="H") %>% filter(!is.na(region)) %>%
+  group_by(can_par_aff,region,can_off_dis) %>% 
+  summarise(par_dis_contributions = sum(tot_con, na.rm=TRUE),
+            wins = sum(winner=="Y")) %>% 
+  rename(DISTRICT = can_off_dis) %>% mutate(DISTRICT = as.character(DISTRICT)) %>%
+  mutate(key = paste(region,DISTRICT, sep = "_")) %>% ungroup() %>%
+  select(can_par_aff,key,par_dis_contributions, wins)
+dem_dis_con <- par_dis_con %>% filter(can_par_aff=="DEM") %>% 
+  select(key,par_dis_contributions, wins) %>% 
+  rename(dem_cont = par_dis_contributions, dem_wins = wins)
+par_dis_con <- par_dis_con %>% filter(can_par_aff=="REP") %>% 
+  select(key,par_dis_contributions, wins) %>% 
+  rename(rep_cont = par_dis_contributions, rep_wins = wins) %>%
+  full_join(dem_dis_con,by="key") %>% 
+  mutate(rep_cont = ifelse(is.na(rep_cont),0,rep_cont),
+         dem_cont = ifelse(is.na(dem_cont),0,dem_cont),
+         diff = rep_cont-dem_cont,
+         rep_wins = ifelse(is.na(rep_wins),0,rep_wins),
+         dem_wins = ifelse(is.na(dem_wins),0,dem_wins),
+         winner = ifelse(rep_wins==1,"REP",ifelse(dem_wins==1,"DEM","OTHER")),
+         prop_cont = rep_cont/(rep_cont+dem_cont)) %>%
+  select(key, diff, winner, rep_cont, dem_cont, prop_cont)
+
+par_dis_con18 <- cont18 %>% filter(can_par_aff=="DEM"|can_par_aff=="REP") %>%
+  filter(can_off=="H") %>% filter(!is.na(region)) %>%
+  group_by(can_par_aff,region,can_off_dis) %>% 
+  summarise(par_dis_contributions = sum(tot_con, na.rm=TRUE)) %>% 
+  rename(DISTRICT = can_off_dis) %>% mutate(DISTRICT = as.character(DISTRICT)) %>%
+  mutate(key = paste(region,DISTRICT, sep = "_")) %>% ungroup() %>%
+  select(can_par_aff,key,par_dis_contributions)
+dem_dis_con18 <- par_dis_con18 %>% filter(can_par_aff=="DEM") %>% 
+  select(key,par_dis_contributions) %>% 
+  rename(dem_cont = par_dis_contributions)
+par_dis_con18 <- par_dis_con18 %>% filter(can_par_aff=="REP") %>% 
+  select(key,par_dis_contributions) %>% 
+  rename(rep_cont = par_dis_contributions) %>%
+  full_join(dem_dis_con,by="key") %>% 
+  mutate(rep_cont = ifelse(is.na(rep_cont),0,rep_cont),
+         dem_cont = ifelse(is.na(dem_cont),0,dem_cont),
+         diff18 = rep_cont-dem_cont,
+         prop_cont18 = rep_cont/(rep_cont+dem_cont)) %>%
+  rename(rep_cont18 = rep_cont,
+         dem_cont18 = dem_cont)
+
+par_dis_con <- par_dis_con %>% full_join(par_dis_con18,by="key") %>%
+  mutate(per_diff = (diff18-diff)/abs(diff)) %>%
+  mutate(prop_diff = (prop_cont18-prop_cont)/abs(prop_cont))
+```
+```{r funding total, include=FALSE}
+cont %>% filter(can_off=="H") %>% group_by(can_par_aff) %>% 
+  summarise(contributions = sum(tot_con, na.rm=TRUE)) %>%
+  filter(can_par_aff %in% c("REP","DEM","IND"))
+cont18 %>% filter(can_off=="H") %>% group_by(can_par_aff) %>% 
+  summarise(contributions = sum(tot_con, na.rm=TRUE)) %>%
+  filter(can_par_aff %in% c("REP","DEM","IND"))
+```
+
+Here is a plot I couldn't use:
+```{r an unuseful plot, echo=FALSE}
+# mapped2 <- cd114_2 %>% left_join(par_dis_con, by="key") %>% 
+#   select(geometry,STATENAME,DISTRICT,rep_over_dem2, wins) %>%
+#   mutate(rep_over_dem2 = ifelse(rep_over_dem2>50,50,ifelse(rep_over_dem2<-50,-50,rep_over_dem2)))
+# ggplot(mapped2) +
+#   geom_sf(aes(geometry = geometry, fill = rep_over_dem2)) +
+#   coord_sf(xlim=c(-125,-60),ylim=c(25,50)) +
+#   theme(axis.ticks.x = element_blank(),
+#         axis.ticks.y = element_blank(),
+#         axis.text.x = element_blank(),
+#         axis.text.y = element_blank()) +
+#   scale_fill_gradient2(low = "blue", midpoint = 0, mid = "white", high = "red",limits=c(-50, 50), breaks=seq(-50, 50, by=5))
+```
+
+
+
+
